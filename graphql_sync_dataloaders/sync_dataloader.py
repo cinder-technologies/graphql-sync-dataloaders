@@ -1,5 +1,5 @@
 import contextvars
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from graphql.pyutils import is_collection
 
@@ -42,12 +42,15 @@ class DataloaderBatchCallbacks:
 
 
 class SyncDataLoader:
-    def __init__(self, batch_load_fn):
+    def __init__(self, batch_load_fn, cache_key_fn: Callable[[Any], str] | None = None):
         self._batch_load_fn = batch_load_fn
+        self._cache_key_fn = cache_key_fn
         self._cache = {}
         self._queue = []
 
     def load(self, key):
+        if self._cache_key_fn:
+            key = self._cache_key_fn(key)
         try:
             return self._cache[key]
         except KeyError:

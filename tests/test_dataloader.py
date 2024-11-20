@@ -1,4 +1,3 @@
-from unittest import mock
 from unittest.mock import Mock
 from functools import partial
 
@@ -64,6 +63,78 @@ def test_deferred_execution():
     assert not result.errors
     assert result.data == {"name1": "Sarah", "name2": "Lucy"}
     assert mock_load_fn.call_count == 1
+
+
+def test_cache_key_fn():
+    NAMES = {}
+
+    class TestEntityClass:
+        def __init__(self, username: str, count: int):
+            self.username = username
+            self.count = count
+
+    def cache_key_fn(entity: TestEntityClass) -> str:
+        return f"{entity.username}-{entity.count}"
+
+    def load_fn(entities):
+        return [NAMES[entity] for entity in entities]
+
+    entities = [
+        TestEntityClass(username="Sarah", count=1),
+        TestEntityClass(username="Lucy", count=2),
+    ]
+
+    for entity in entities:
+        NAMES[cache_key_fn(entity)] = entity.username
+
+    mock_load_fn = Mock(wraps=load_fn)
+    dataloader = SyncDataLoader(mock_load_fn, cache_key_fn)
+
+    def resolve_name(_, __, key):
+        entity = entities[int(key)]
+        return dataloader.load(entity)
+
+    schema = GraphQLSchema(
+        query=GraphQLObjectType(
+            name="Query",
+            fields={
+                "name": GraphQLField(
+                    GraphQLString,
+                    args={
+                        "key": GraphQLArgument(GraphQLString),
+                    },
+                    resolve=resolve_name,
+                )
+            },
+        )
+    )
+
+    result = graphql_sync_deferred(
+        schema,
+        """
+        query {
+            name1: name(key: "0")
+            name2: name(key: "1")
+        }
+        """,
+    )
+    assert not result.errors
+    assert result.data == {"name1": "Sarah", "name2": "Lucy"}
+    assert mock_load_fn.call_count == 1
+
+    # Ensure the cache is used for requests with the same key instead of the loader function
+    mock_load_fn.reset_mock()
+    result = graphql_sync_deferred(
+        schema,
+        """
+        query {
+            name1: name(key: "0")
+            name2: name(key: "1")
+        }
+        """,
+    )
+    assert result.data == {"name1": "Sarah", "name2": "Lucy"}
+    assert mock_load_fn.call_count == 0
 
 
 def test_nested_deferred_execution():
